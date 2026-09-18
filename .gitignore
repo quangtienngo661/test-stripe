@@ -4,3 +4,6 @@ dist/
 .mongo-data/
 *.log
 .DS_Store
+
+# build artifacts
+*.tsbuildinfo

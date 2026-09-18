@@ -11,6 +11,8 @@ là đổi hành vi thật của Stripe.
 | MongoDB | `27099` |
 
 Đọc thêm:
+- [`docs/business-rules.md`](docs/business-rules.md) — **quy tắc tính tiền bằng ngôn ngữ nghiệp vụ** (bắt đầu từ đây)
+- [`docs/scio-portal-mvp.md`](docs/scio-portal-mvp.md) — phạm vi mang sang **SCIO Portal**: Standard plan + X add-on
 - [`docs/optisigns-billing-model.md`](docs/optisigns-billing-model.md) — OptiSigns tính tiền thế nào (kèm nguồn)
 - [`docs/stripe-mapping.md`](docs/stripe-mapping.md) — từng nút vặn ánh xạ sang tham số Stripe nào
 
@@ -97,6 +99,19 @@ Add-on nằm chung subscription, cùng term với gói nền:
 | Background Music | screen | $15.00 | $13.50 |
 | Wireless Presentation | screen | $20.00 | $18.00 |
 
+**X Social** là add-on **bán theo hạn mức post, không theo thời gian** — mua ngày
+cuối kỳ vẫn trả đủ giá và vẫn nhận đủ hạn mức:
+
+| Tier | Monthly | Annual | Hạn mức |
+|---|---|---|---|
+| X Social Standard | $10.00 | $9.00 | 600 post / tháng |
+| X Social Pro | $30.00 | $27.00 | 2.000 post / tháng |
+
+Gói năm trả trước cho **12 hạn mức tháng**. Đồng hồ post lật sang hạn mức mới ở
+mỗi mốc tháng bên trong năm, và **post thừa của tháng đã qua thì mất** — không
+dồn sang tháng sau, không quy ra tiền. Đổi tier thì phần post chưa tiêu của tier
+cũ quy thành Stripe credit; các tháng phía sau chưa đụng tới hoàn trọn tháng.
+
 **Enterprise** ($45.00 / $40.50, tối thiểu 25 màn hình) là kênh "Talk With
 Sales" nên không dựng trong demo self-serve này — thêm lại bằng một entry trong
 [`catalog.constants.ts`](backend/src/catalog/catalog.constants.ts). Bảng giá
@@ -111,13 +126,18 @@ không add-on, add-on tính theo màn hình không vượt quá số màn hình.
 
 Tab **Billing policy** trong UI (hoặc `GET/PUT /api/policy`) chỉnh:
 
-- **8 change rule** — `screensIncrease`, `screensDecrease`, `planUpgrade`,
-  `planDowngrade`, `addOnIncrease`, `addOnDecrease`, `termToYearly`,
-  `termToMonthly`. Mỗi rule có `timing`, `prorationBehavior`,
+- **9 change rule** — `screensIncrease`, `screensDecrease`, `planUpgrade`,
+  `planDowngrade`, `addOnIncrease`, `addOnDecrease`, `addOnTierChange`,
+  `termToYearly`, `termToMonthly`. Mỗi rule có `timing`, `prorationBehavior`,
   `billingCycleAnchor`, `paymentBehavior`, `creditHandling`.
-  `creditHandling` có 4 giá trị: `customer_balance` (để nguyên chỗ Stripe đặt),
+  `creditHandling` có 5 giá trị: `customer_balance` (để nguyên chỗ Stripe đặt),
   `push_to_account_balance` (luôn hiện thành account credit),
-  `refund_to_payment_method` (hoàn về thẻ), `none` (thu hồi credit).
+  `refund_to_payment_method` (hoàn về thẻ), `none` (thu hồi credit),
+  `block` (**từ chối** thao tác nếu nó khiến công ty phải trả lại tiền).
+  Riêng `addOnTierChange` có thêm `creditBasis`: `time` tính theo ngày còn lại,
+  `quota` tính theo hạn mức chưa tiêu — X Social dùng `quota`.
+- **Per-add-on override** (`addOnRules`) — đè rule riêng cho từng họ add-on,
+  ví dụ bỏ X Social thì đặt lịch cuối kỳ và không hoàn gì.
 - **Cancellation** — huỷ cuối kỳ hay huỷ ngay, có prorate không, phần chưa dùng
   thành credit hay hoàn về thẻ.
 - **Trial** — `appliesTo` (`only_without_payment_method` như OptiSigns / `always` /
@@ -129,13 +149,14 @@ Tab **Billing policy** trong UI (hoặc `GET/PUT /api/policy`) chỉnh:
 - **Refunds** — cửa sổ ngày, credit note hay refund thuần, cho phép refund một
   phần, trần tự động duyệt.
 - **Constraints** — min/max số lượng, quan hệ add-on ↔ màn hình, cho phép về 0
-  màn hình.
+  màn hình, và **add-on bắt buộc phải có subscription trả phí** mới mua được.
 - **Dunning** — làm gì khi `invoice.payment_failed`, `pause_collection.behavior`.
 
-### 5 preset dựng sẵn
+### 6 preset dựng sẵn
 
 | Preset | Hành vi |
 |---|---|
+| `scio_portal_mvp` | **Phạm vi migrate sang SCIO Portal**: Standard plan 1 màn hình + X Social Standard/Pro, tháng hoặc năm. Hạ tier thì hoàn hạn mức chưa tiêu về credit; **huỷ thì không hoàn gì** và chạy tới hết kỳ |
 | `optisigns_default` | Mọi credit ở lại trong Stripe dưới dạng **account credit**, không refund về thẻ. Prorate dồn vào hoá đơn kỳ sau; riêng **yearly → monthly áp dụng ngay** và phần năm chưa dùng thành credit |
 | `charge_immediately` | Mọi thay đổi xuất hoá đơn và thu tiền ngay |
 | `annual_commitment` | Upgrade ngay, mọi thao tác giảm — kể cả yearly → monthly — phải chờ tới kỳ gia hạn (subscription schedule), không hoàn tiền |
@@ -185,6 +206,14 @@ mà không cần đổi policy chung.
    hạ `maxAutoApproveCents` hoặc `windowDays` để thấy API chặn đúng luật.
 9. **Pause theo mùa** — *Pause (seasonal)*: `pause_collection` với behavior lấy
    từ policy, tương ứng luồng OnHold của OptiSigns.
+10. **X Social đo theo post** — mua X Social Pro, nhập số post đã tiêu vào ô
+    ngay dòng *Metered add-ons* (hoặc card **Usage meter** ở sidebar), rồi hạ về
+    Standard: credit bằng `giá × post chưa tiêu / hạn mức`, ngày tháng không
+    tham gia. Đồng hồ post là nút vặn cho **mức dùng**, đúng kiểu Time machine
+    là nút vặn cho **thời gian**.
+11. **Gói năm lật hạn mức từng tháng** — X Social gói năm, nhập 400 post rồi tua
+    một tháng: đồng hồ về `0/600` và post thừa tháng cũ **mất luôn**. Tới tháng
+    3 hạ tier thì credit chỉ tính tháng 3 cộng 9 tháng chưa đụng tới.
 
 Tab **Activity log** ghi lại mọi thao tác: rule nào được áp, policy lúc đó ra
 sao, payload gửi sang Stripe là gì và Stripe trả về gì.
@@ -248,6 +277,12 @@ desired state → validate ràng buộc → classifyChange() → rule = policy +
 ## 7. Giới hạn đã biết
 
 - **Không có auth.** Mọi endpoint đều mở — demo chạy local, đừng expose ra ngoài.
+- **Trial riêng của X Social chưa dựng** — theo MODEL V5 là *14 ngày / 200 post /
+  mỗi tài khoản một lần / chỉ khi plan nền là gói tháng*. Trial ở mức plan thì đã
+  chạy. Đây là phần còn thiếu duy nhất trong phạm vi
+  [SCIO Portal MVP](docs/scio-portal-mvp.md).
+- **Không có webhook secret** trong cấu hình mặc định, nên các hành động dunning
+  tự động không tự kích hoạt.
 - `billing_mode` chỉ đặt được lúc tạo subscription (giới hạn của Stripe). Đổi
   trong policy chỉ ảnh hưởng subscription tạo sau đó; app sẽ cảnh báo khi
   subscription đang chạy lệch với policy.

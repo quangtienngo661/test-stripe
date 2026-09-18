@@ -292,6 +292,46 @@ export const NO_PRORATION: BillingPolicyShape = {
   ) as BillingPolicyShape['rules'],
 };
 
+/**
+ * The subset the SCIO Portal migration sells: one Standard plan of a single
+ * screen, plus X Social at either tier, on the monthly or the annual term.
+ *
+ * It is the default policy with the two boundaries the portal leans on written
+ * out rather than left implicit: giving a tier up mid-cycle hands back the
+ * unspent allowance, while cancelling hands back nothing and simply runs to the
+ * end of the period.
+ */
+export const SCIO_PORTAL_MVP: BillingPolicyShape = {
+  ...OPTISIGNS_DEFAULT,
+  cancellation: {
+    ...OPTISIGNS_DEFAULT.cancellation,
+    timing: 'at_period_end',
+    prorateUnusedTime: false,
+    invoiceImmediately: false,
+    // cancelling is not a downgrade: the customer keeps what they paid for
+    // until the boundary and nothing is valued back to them
+    refundUnusedTime: 'none',
+  },
+  constraints: {
+    ...OPTISIGNS_DEFAULT.constraints,
+    addOnsRequirePaidPlan: true,
+  },
+  addOnRules: {
+    ...OPTISIGNS_DEFAULT.addOnRules,
+    x_social: {
+      ...(OPTISIGNS_DEFAULT.addOnRules?.x_social ?? {}),
+      remove: {
+        timing: 'end_of_period',
+        prorationBehavior: 'none',
+        paymentBehavior: 'allow_incomplete',
+        creditHandling: 'none',
+        notes:
+          'Dropping X Social is a cancellation, not a downgrade: the allowance stays usable until the renewal boundary and no money comes back. Moving between the two tiers is the path that hands back unspent posts.',
+      },
+    },
+  },
+};
+
 export interface PresetDef {
   key: string;
   name: string;
@@ -300,6 +340,13 @@ export interface PresetDef {
 }
 
 export const PRESETS: PresetDef[] = [
+  {
+    key: 'scio_portal_mvp',
+    name: 'SCIO Portal (MVP)',
+    description:
+      'The migration subset: Standard plan of one screen plus X Social Standard/Pro, monthly or annual. Giving up a tier returns the unspent allowance as credit; cancelling returns nothing and runs to the period end.',
+    policy: SCIO_PORTAL_MVP,
+  },
   {
     key: 'optisigns_default',
     name: 'OptiSigns default',

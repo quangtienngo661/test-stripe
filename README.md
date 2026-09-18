@@ -11,6 +11,7 @@ là đổi hành vi thật của Stripe.
 | MongoDB | `27099` |
 
 Đọc thêm:
+- [`docs/scio-integration-context.md`](docs/scio-integration-context.md) — **context bàn giao** để mang cơ chế này sang SCIO Portal
 - [`docs/business-rules.md`](docs/business-rules.md) — **quy tắc tính tiền bằng ngôn ngữ nghiệp vụ** (bắt đầu từ đây)
 - [`docs/scio-portal-mvp.md`](docs/scio-portal-mvp.md) — phạm vi mang sang **SCIO Portal**: Standard plan + X add-on
 - [`docs/optisigns-billing-model.md`](docs/optisigns-billing-model.md) — OptiSigns tính tiền thế nào (kèm nguồn)

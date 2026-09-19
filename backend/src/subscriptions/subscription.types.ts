@@ -55,3 +55,15 @@ export interface ChangeRequest extends DesiredState {
    */
   quotaUsed?: number;
 }
+
+/**
+ * A move on a usage-priced add-on line. Tier and quantity travel together
+ * because either one changes what allowance is held and what it cost, and
+ * MODEL V5 settles both through the same flow (row 8).
+ */
+export interface UsageChange {
+  from: import('../catalog/catalog.schema').CatalogItemDocument | null;
+  to: import('../catalog/catalog.schema').CatalogItemDocument | null;
+  fromQuantity: number;
+  toQuantity: number;
+}

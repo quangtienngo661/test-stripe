@@ -52,11 +52,26 @@ export class CatalogService implements OnModuleInit {
       };
       const tunable = { quotaAllowance: def.quotaAllowance, quotaLabel: def.quotaLabel };
 
+      /*
+       * A structural field that the price book no longer sets has to be removed,
+       * not skipped. `$set: { x: undefined }` is dropped before it reaches Mongo,
+       * so without this an optional field keeps whatever value it was seeded with
+       * years ago — lifting a quantity ceiling in code would leave the old ceiling
+       * enforcing itself out of the database.
+       */
+      const set: Record<string, unknown> = {};
+      const unset: Record<string, ''> = {};
+      for (const [key, value] of Object.entries(structural)) {
+        if (value === undefined) unset[key] = '';
+        else set[key] = value;
+      }
+
       await this.model.updateOne(
         { code: def.code },
-        force
-          ? { $set: { ...structural, ...tunable } }
-          : { $set: structural, $setOnInsert: tunable },
+        {
+          ...(force ? { $set: { ...set, ...tunable } } : { $set: set, $setOnInsert: tunable }),
+          ...(Object.keys(unset).length ? { $unset: unset } : {}),
+        },
         { upsert: true },
       );
     }

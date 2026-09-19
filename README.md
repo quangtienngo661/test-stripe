@@ -66,7 +66,8 @@ nhận payload chưa ký (tiện cho demo local).
 ### Kiểm thử toàn bộ vòng đời
 
 ```bash
-node scripts/verify.mjs          # thêm --keep để giữ lại account trong Stripe
+node scripts/verify.mjs               # thêm --keep để giữ lại account trong Stripe
+node scripts/verify-x-quantity.mjs    # quantity trên X add-on (chạy riêng, không song song)
 ```
 
 Script đi hết 15 bước: trial → subscribe → thêm màn hình (prorate) → add-on →
@@ -99,18 +100,59 @@ Add-on nằm chung subscription, cùng term với gói nền:
 | Background Music | screen | $15.00 | $13.50 |
 | Wireless Presentation | screen | $20.00 | $18.00 |
 
-**X Social** là add-on **bán theo hạn mức post, không theo thời gian** — mua ngày
-cuối kỳ vẫn trả đủ giá và vẫn nhận đủ hạn mức:
+**X Social** bán **theo account, theo số lượng nguyên, không có trần** (MODEL V5
+row 4). Quantity nhân **cả giá lẫn hạn mức post**:
 
-| Tier | Monthly | Annual | Hạn mức |
+| Tier | Monthly | Annual | Hạn mức / licence |
 |---|---|---|---|
 | X Social Standard | $10.00 | $9.00 | 600 post / tháng |
 | X Social Pro | $30.00 | $27.00 | 2.000 post / tháng |
 
-Gói năm trả trước cho **12 hạn mức tháng**. Đồng hồ post lật sang hạn mức mới ở
-mỗi mốc tháng bên trong năm, và **post thừa của tháng đã qua thì mất** — không
-dồn sang tháng sau, không quy ra tiền. Đổi tier thì phần post chưa tiêu của tier
-cũ quy thành Stripe credit; các tháng phía sau chưa đụng tới hoàn trọn tháng.
+Mua 4 licence Standard = $40/tháng và 2.400 post/tháng, nằm trên **một** Stripe
+subscription item duy nhất — đổi quantity là update chính item đó, không bao giờ
+tạo item mới (row 51). Đổi tier thì **giữ nguyên quantity**.
+
+Mua lần đầu vào **giữa tháng** thì trả theo phần tháng còn lại, và hạn mức bị
+cắt đúng bằng phân số đó — `floor(600 × quantity × phần còn lại)` (row 47). Nhờ
+vậy **giá mỗi post không phụ thuộc ngày mua**. Đây là chỗ duy nhất lịch được đụng
+tới với add-on loại này.
+
+**Tăng quantity là phép cộng, không phải thay thế.** Licence đang có giữ nguyên
+hạn mức đã bán cho chúng; chỉ licence mới được tính tiền, cho phần tháng còn lại:
+
+```
+charge     = round(đơn giá × Δ × phần còn lại)
+quotaAdded = floor(hạn mức × Δ × phần còn lại)
+```
+
+Hạn mức và số tiền đã xuất hoá đơn **cộng dồn**, đồng hồ post **không bị reset**,
+và **không phát credit** — nhờ vậy mua thêm licence không bao giờ làm giảm số post
+khả dụng. Nếu cuối tháng còn quá ít thời gian để bán được post nào (`quotaAdded`
+bằng 0) thì **không thu tiền**, licence mới có hiệu lực từ tháng hạn mức kế tiếp.
+
+**Gỡ hẳn add-on** (về 0) là **huỷ**, không phải giảm: nó chạy tới hết kỳ đã trả và
+**không hoàn đồng nào** (row 49). Trong lúc chờ, licence vẫn dùng được và hạn mức
+vẫn còn; nút **Call it off** trên banner *Scheduled change* huỷ lịch đó và trả
+subscription về nguyên trạng — bật lại add-on **không** làm được việc này, vì
+subscription vẫn đang giữ add-on nên request bị coi là "không có gì thay đổi".
+
+**Giảm quantity, đổi tier, đổi term** vẫn chạy luồng thay thế của row 8: credit
+bằng `số tiền thực sự đã xuất hoá đơn cho tháng này × post chưa tiêu / hạn mức đã
+cấp` — **không** phải theo giá niêm yết, và cả hai vế là con số **cộng dồn** của
+mọi lần mua trong tháng đó.
+
+Gói năm trả trước cho **12 hạn mức tháng**: tháng đang dở tính theo phần còn lại,
+các tháng **thực sự còn lại** của kỳ tính trọn vẹn — đổi vào tháng thứ 4 thì thu 8
+tháng, không phải 11. Đồng hồ post lật sang hạn mức mới ở mỗi mốc tháng bên
+trong năm, và **post thừa của tháng đã qua thì mất** — không dồn sang tháng sau,
+không quy ra tiền. Các tháng phía sau chưa đụng tới thì hoàn trọn tháng.
+
+**Capacity guard** (row 17): tổng dung lượng đã bán trên toàn hệ thống —
+`600 × Σ quantity Standard + 2.000 × Σ quantity Pro + 200 × số trial đang chạy` —
+bị **chặn** khi vượt `constraints.capacityBlockAtUnits` (mặc định 2.400.000) và
+cảnh báo từ `capacityWarnAtUnits` (2.100.000). Guard chạy **trước khi tạo hoá
+đơn** (row 48) nên bị từ chối thì không có gì phải hoàn tác, và **không** áp cho
+thao tác giảm vì giảm chỉ trả lại dung lượng (row 63).
 
 **Enterprise** ($45.00 / $40.50, tối thiểu 25 màn hình) là kênh "Talk With
 Sales" nên không dựng trong demo self-serve này — thêm lại bằng một entry trong
@@ -208,9 +250,14 @@ mà không cần đổi policy chung.
    từ policy, tương ứng luồng OnHold của OptiSigns.
 10. **X Social đo theo post** — mua X Social Pro, nhập số post đã tiêu vào ô
     ngay dòng *Metered add-ons* (hoặc card **Usage meter** ở sidebar), rồi hạ về
-    Standard: credit bằng `giá × post chưa tiêu / hạn mức`, ngày tháng không
-    tham gia. Đồng hồ post là nút vặn cho **mức dùng**, đúng kiểu Time machine
-    là nút vặn cho **thời gian**.
+    Standard: credit bằng `tiền đã xuất hoá đơn × post chưa tiêu / hạn mức đã
+    cấp`. Đồng hồ post là nút vặn cho **mức dùng**, đúng kiểu Time machine là nút
+    vặn cho **thời gian**.
+10b. **Quantity trên X add-on** — ô *licences* ngay dưới hàng tier: tăng lên 4 thì
+    giá và hạn mức cùng ×4 trên một item. Tua nửa tháng rồi tăng tiếp: hoá đơn
+    chỉ thu phần tháng còn lại và hạn mức cấp ra cũng cắt đúng phân số đó. Hạ
+    xuống thì phần chưa tiêu quy thành credit theo số tiền đã thu thật. Kịch bản
+    đầy đủ: `node scripts/verify-x-quantity.mjs`.
 11. **Gói năm lật hạn mức từng tháng** — X Social gói năm, nhập 400 post rồi tua
     một tháng: đồng hồ về `0/600` và post thừa tháng cũ **mất luôn**. Tới tháng
     3 hạ tier thì credit chỉ tính tháng 3 cộng 9 tháng chưa đụng tới.
@@ -238,6 +285,7 @@ sao, payload gửi sang Stripe là gì và Stripe trả về gì.
 | `POST` | `/api/subscriptions/:id/preview` | **dry-run**: hoá đơn Stripe sẽ tạo + giải thích rule |
 | `POST` | `/api/subscriptions/:id/change` | áp thay đổi theo policy |
 | `POST` | `/api/subscriptions/:id/cancel` \| `/resume` \| `/pause` \| `/unpause` \| `/end-trial` | vòng đời |
+| `POST` | `/api/subscriptions/:id/cancel-scheduled-change` | huỷ một thay đổi đang chờ cuối kỳ, trước khi nó có hiệu lực |
 | `GET` | `/api/subscriptions/:id/renewal-preview` | hoá đơn gia hạn kế tiếp |
 | `GET` | `/api/billing/accounts/:id/invoices` | hoá đơn kèm line item, đánh dấu proration |
 | `POST` | `/api/billing/invoices/:id/pay` \| `/void` \| `/finalize` \| `/uncollectible` | thao tác hoá đơn |

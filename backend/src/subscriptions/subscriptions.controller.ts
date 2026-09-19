@@ -38,6 +38,12 @@ export class SubscriptionsController {
     return this.subscriptions.endTrial(accountId);
   }
 
+  /** Calls off a change parked for the renewal, before it lands (MODEL V5 row 49). */
+  @Post(':accountId/cancel-scheduled-change')
+  cancelScheduledChange(@Param('accountId') accountId: string) {
+    return this.subscriptions.cancelScheduledChange(accountId);
+  }
+
   @Post(':accountId/resume')
   resume(@Param('accountId') accountId: string) {
     return this.subscriptions.resume(accountId);

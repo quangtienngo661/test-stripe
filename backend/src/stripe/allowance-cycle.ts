@@ -74,3 +74,24 @@ export function allowanceCycle(
     monthsInPeriod,
   };
 }
+
+/**
+ * How much of the allowance month is still ahead, as a fraction in (0, 1].
+ *
+ * This is the one place the calendar touches a usage-priced item, and it is
+ * deliberately the *same* number for the price and for the allowance: buying
+ * half a month costs half the price and grants half the posts, so the rate per
+ * post does not depend on the day the customer arrives (MODEL V5 row 47).
+ *
+ * Clamped to (0, 1] so that arriving on the last second of a month still buys a
+ * sliver rather than nothing, and so a clock that has drifted before the cycle
+ * start cannot hand out more than a whole month.
+ */
+export function remainingFraction(cycle: AllowanceCycle, now: number): number {
+  const span = cycle.cycleEnd - cycle.cycleStart;
+  if (span <= 0) return 1;
+  const left = cycle.cycleEnd - now;
+  if (left >= span) return 1;
+  if (left <= 0) return 0;
+  return left / span;
+}

@@ -422,6 +422,42 @@ export default function PolicyPanel({ run, busy, refreshToken }: any) {
                 onChange={(v: any) => patchSection('constraints', 'allowZeroScreens', v)}
               />
             </div>
+            {/*
+              The provider budget is the only thing that can refuse a quantity
+              increase now that the per-plan ceiling is gone, so its dials belong
+              where every other rule is turned.
+            */}
+            <div>
+              <label>enforce provider capacity guard</label>
+              <Toggle
+                value={policy.policy.constraints.enforceCapacityGuard}
+                onChange={(v: any) => patchSection('constraints', 'enforceCapacityGuard', v)}
+              />
+            </div>
+            <div>
+              <label>refuse above (post updates / month)</label>
+              <input
+                type="number"
+                value={policy.policy.constraints.capacityBlockAtUnits}
+                onChange={(e) => patchSection('constraints', 'capacityBlockAtUnits', Number(e.target.value))}
+              />
+            </div>
+            <div>
+              <label>warn above (post updates / month)</label>
+              <input
+                type="number"
+                value={policy.policy.constraints.capacityWarnAtUnits}
+                onChange={(e) => patchSection('constraints', 'capacityWarnAtUnits', Number(e.target.value))}
+              />
+            </div>
+            <div>
+              <label>each running trial commits</label>
+              <input
+                type="number"
+                value={policy.policy.constraints.trialCapacityUnits}
+                onChange={(e) => patchSection('constraints', 'trialCapacityUnits', Number(e.target.value))}
+              />
+            </div>
           </div>
         </section>
 

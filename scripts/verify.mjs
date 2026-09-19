@@ -946,13 +946,20 @@ const run = async () => {
     xUp.creditCents === Math.round(1000 * 400 / 600),
     `${money(xUp.creditCents)} = ${xUp.workings.creditFormula}`);
   /*
-   * 15 of 30 days are gone, so anything measured by the calendar would charge
-   * about half. The allowance is not a calendar: taking a tier costs its full
-   * price and grants its full allowance.
+   * 15 of 30 days are gone, so half the allowance month is still ahead. MODEL
+   * V5 row 47 sells that half: the price and the posts are cut by the same
+   * fraction, which is what keeps the rate per post the same whenever in the
+   * month the customer arrives.
    */
-  check('New tier costs its full price whatever the date',
-    xUp.chargeCents === 3000,
-    `${money(xUp.chargeCents)} — half a month gone, still the full price`);
+  const upFraction = xUp.workings.remainingFraction;
+  check('About half the allowance month is still ahead',
+    Math.abs(upFraction - 0.5) < 0.03, `${(upFraction * 100).toFixed(1)}%`);
+  check('The new tier is sold by the slice of the month that is left',
+    xUp.chargeCents === Math.round(3000 * upFraction),
+    `${money(xUp.chargeCents)} = ${xUp.workings.chargeFormula}`);
+  check('The posts granted are cut by the very same fraction',
+    xUp.quota.granted === Math.floor(2000 * upFraction),
+    `${xUp.quota.granted} posts = ${xUp.workings.quotaFormula}`);
 
   const xAfterUp = await GET(`/subscriptions/${xid}`);
   check('The line is repriced, not replaced', xAfterUp.stripe.items.length === 2 &&
@@ -972,8 +979,17 @@ const run = async () => {
     planCode: 'pro_plus', term: 'monthly', screens: 2,
     addOns: [{ code: 'x_social_standard', quantity: 1 }], quotaUsed: 500,
   });
-  check('Downgrading uses the same rule and formula',
-    xDown.ruleKey === 'addOnTierChange' && xDown.creditCents === Math.round(3000 * 1500 / 2000),
+  check('Downgrading uses the same rule', xDown.ruleKey === 'addOnTierChange', xDown.ruleKey);
+  /*
+   * MODEL V5 row 8 values the hand-back against what was *actually* invoiced
+   * for this item this period, which after a mid-month purchase is not the list
+   * price — so the figure has to be the one the step above really charged.
+   */
+  check('The hand-back is valued against the invoice the step above raised',
+    xDown.workings.invoicedForCycle === xUp.chargeCents,
+    `${money(xDown.workings.invoicedForCycle)} invoiced vs ${money(xUp.chargeCents)} charged`);
+  check('And it hands back the unspent share of the posts granted',
+    xDown.creditCents === Math.round((xUp.chargeCents * (xUp.quota.granted - 500)) / xUp.quota.granted),
     `${money(xDown.creditCents)} = ${xDown.workings.creditFormula}`);
   check('Still no negative invoice anywhere',
     (await GET(`/billing/accounts/${xid}/invoices`)).every((i) => i.total >= 0));
@@ -983,9 +999,12 @@ const run = async () => {
   const meterPreview = await POST(`/subscriptions/${xid}/preview`, {
     planCode: 'pro_plus', term: 'monthly', screens: 2, addOns: [{ code: 'x_social_pro', quantity: 1 }],
   });
+  const meterCap = meterPreview.quota?.allowance ?? 0;
   check('A request with no usage figure reads the meter',
-    meterPreview.quota?.used === 150 && meterPreview.breakdown.creditCents === Math.round(1000 * 450 / 600),
-    `used ${meterPreview.quota?.used} → ${money(meterPreview.breakdown.creditCents)}`);
+    meterPreview.quota?.used === 150 &&
+      meterPreview.breakdown.creditCents ===
+        Math.round((xDown.chargeCents * (meterCap - 150)) / meterCap),
+    `used ${meterPreview.quota?.used} of ${meterCap} → ${money(meterPreview.breakdown.creditCents)}`);
 
   const overridden = await POST(`/subscriptions/${xid}/preview`, {
     planCode: 'pro_plus', term: 'monthly', screens: 2,
@@ -1003,7 +1022,7 @@ const run = async () => {
     meterPreview.breakdown.monthsAhead === 0,
     `monthsAhead=${meterPreview.breakdown.monthsAhead} on a monthly term`);
 
-  await POST(`/subscriptions/${xid}/change`, {
+  const xRebuy = await POST(`/subscriptions/${xid}/change`, {
     planCode: 'pro_plus', term: 'monthly', screens: 2, addOns: [{ code: 'x_social_pro', quantity: 1 }],
   });
   const meterAfter = await GET(`/accounts/${xid}`);
@@ -1021,11 +1040,18 @@ const run = async () => {
     planCode: 'pro_plus', term: 'yearly', screens: 2,
     addOns: [{ code: 'x_social_standard', quantity: 1 }], quotaUsed: 100,
   });
-  check('The add-on is valued at the term it was sold on',
-    xTerm.creditCents === Math.round(3000 * 1900 / 2000),
+  check('The add-on is valued against what the monthly term really charged for it',
+    xTerm.workings.invoicedForCycle === xRebuy.chargeCents &&
+      xTerm.creditCents ===
+        Math.round((xRebuy.chargeCents * (xRebuy.quota.granted - 100)) / xRebuy.quota.granted),
     `${money(xTerm.creditCents)} = ${xTerm.workings.creditFormula}`);
-  check('And bought at the new term: twelve allowances',
-    xTerm.chargeCents === 900 * 12,
+  /*
+   * A yearly term buys twelve allowances, but the one in progress is still only
+   * worth the part of it that is left — so it is eleven whole months plus a
+   * slice, not twelve whole months.
+   */
+  check('And bought at the new term: the month in progress by the slice, then eleven whole',
+    xTerm.chargeCents === Math.round(900 * xTerm.workings.remainingFraction) + 900 * 11,
     `${money(xTerm.chargeCents)} = ${xTerm.workings.chargeFormula}`);
 
   const xTermInvoices = await GET(`/billing/accounts/${xid}/invoices`);

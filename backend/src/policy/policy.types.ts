@@ -168,6 +168,22 @@ export interface ConstraintPolicy {
   freePlanScreenCap: number;
   /** allow reducing screens to 0 as a "seasonal pause" */
   allowZeroScreens: boolean;
+  /**
+   * Admission control on the upstream provider budget (MODEL V5 row 17). The
+   * committed capacity is what has been sold — every usage-priced licence held,
+   * times its monthly allowance, plus a nominal charge per running trial —
+   * rather than what has been spent.
+   *
+   * Anything that would *raise* it is refused once the projection passes
+   * `capacityBlockAtUnits`: a first purchase, a quantity increase, a move to a
+   * bigger tier, a new trial. Reductions are always allowed, because they only
+   * give capacity back (MODEL V5 row 63).
+   */
+  enforceCapacityGuard: boolean;
+  capacityWarnAtUnits: number;
+  capacityBlockAtUnits: number;
+  /** what one running trial commits, before it has any licence of its own */
+  trialCapacityUnits: number;
 }
 
 export interface DunningPolicy {

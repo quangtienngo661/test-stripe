@@ -105,13 +105,35 @@ export function classifyChange(args: {
     if (sibling) tierSwitch = { family, fromCode: sibling, toCode: code };
   }
 
+  /*
+   * A usage-priced family whose quantity was *cut* gives allowance back, which
+   * only the tier-change flow knows how to value (row 8 credits on allowance
+   * rather than on days). Buying more is not that: it adds licences without
+   * disturbing the ones already sold, so it stays an ordinary add-on increase.
+   */
+  let quantityOnlyUsageChange: { family: string; fromCode: string; toCode: string } | null = null;
+  for (const [code, after] of desiredAddOns) {
+    const def = addOnItems.get(code);
+    if (!def?.usagePriced || !def.family) continue;
+    const before = currentAddOns.get(code) ?? 0;
+    /*
+     * Only a *reduction* is a reconfiguration: it gives quota back, so it runs
+     * the replace-everything flow. Buying more is additive — the licences
+     * already held keep what they were sold — and is an ordinary add-on
+     * increase.
+     */
+    if (before > 0 && after < before) {
+      quantityOnlyUsageChange = { family: def.family, fromCode: code, toCode: code };
+    }
+  }
+
   let ruleKey: ChangeRuleKey | null = null;
   if (current.term !== desired.term) {
     ruleKey = desired.term === 'yearly' ? 'termToYearly' : 'termToMonthly';
   } else if (current.planCode !== desired.planCode) {
     const currentRank = currentPlan?.tierRank ?? 0;
     ruleKey = desiredPlan.tierRank >= currentRank ? 'planUpgrade' : 'planDowngrade';
-  } else if (tierSwitch) {
+  } else if (tierSwitch || quantityOnlyUsageChange) {
     ruleKey = 'addOnTierChange';
   } else if (current.screens !== desired.screens) {
     ruleKey = desired.screens > current.screens ? 'screensIncrease' : 'screensDecrease';
@@ -135,6 +157,7 @@ export function classifyChange(args: {
     /** the add-on family this change concerns, for per-add-on rule overrides */
     family:
       tierSwitch?.family ??
+      quantityOnlyUsageChange?.family ??
       (ruleKey === 'addOnIncrease' || ruleKey === 'addOnDecrease'
         ? [...new Set([...currentAddOns.keys(), ...desiredAddOns.keys()])]
             .filter((c) => (currentAddOns.get(c) ?? 0) !== (desiredAddOns.get(c) ?? 0))
@@ -200,9 +223,12 @@ export function validateDesiredState(args: {
       }
       seenFamilies.set(def.family, addOn.code);
     }
-    if (def.perAccount && addOn.quantity > 1) {
-      throw new BadRequestException(`${def.name} is licensed per account, so its quantity is always 1`);
-    }
+    /*
+     * Being licensed per account says where the add-on attaches, not how many
+     * of it may be held: quantity is the customer's to choose and has no
+     * per-plan ceiling (MODEL V5 row 4). An add-on that really is single-seat
+     * still says so through maxQuantity, which is checked next.
+     */
     if (def.maxQuantity && addOn.quantity > def.maxQuantity) {
       throw new BadRequestException(`${def.name} allows at most ${def.maxQuantity}`);
     }

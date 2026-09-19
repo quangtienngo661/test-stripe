@@ -46,6 +46,8 @@ export const api = {
   cancel: (id: string, body: any) =>
     request<any>(`/subscriptions/${id}/cancel`, { method: 'POST', body: JSON.stringify(body) }),
   resume: (id: string) => request<any>(`/subscriptions/${id}/resume`, { method: 'POST' }),
+  cancelScheduledChange: (id: string) =>
+    request<any>(`/subscriptions/${id}/cancel-scheduled-change`, { method: 'POST' }),
   endTrial: (id: string) => request<any>(`/subscriptions/${id}/end-trial`, { method: 'POST' }),
   pause: (id: string) => request<any>(`/subscriptions/${id}/pause`, { method: 'POST', body: JSON.stringify({}) }),
   unpause: (id: string) => request<any>(`/subscriptions/${id}/unpause`, { method: 'POST' }),

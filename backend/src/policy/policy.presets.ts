@@ -142,6 +142,11 @@ export const OPTISIGNS_DEFAULT: BillingPolicyShape = {
     addOnCannotExceedScreens: true,
     freePlanScreenCap: 3,
     allowZeroScreens: true,
+    // MODEL V5 row 17: warn at 70% of the provider budget, refuse at 80%.
+    enforceCapacityGuard: true,
+    capacityWarnAtUnits: 2_100_000,
+    capacityBlockAtUnits: 2_400_000,
+    trialCapacityUnits: 200,
   },
   dunning: {
     pastDueBehavior: 'leave_past_due',

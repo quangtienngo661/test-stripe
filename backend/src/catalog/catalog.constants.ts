@@ -39,18 +39,27 @@ export interface CatalogItemDef {
    */
   family?: string;
   /**
-   * Licensed per account rather than per unit, so quantity is always 1 and the
-   * add-on ≤ screens rule does not apply.
+   * Licensed against the account rather than against a screen, so the
+   * add-on ≤ screens rule does not apply. It says nothing about how many the
+   * customer may hold: a per-account add-on with no ceiling is sold in
+   * whole-number quantities like any other (MODEL V5 row 4), and one that is
+   * genuinely single-seat says so with an explicit maxQuantity of one.
    */
   perAccount?: boolean;
-  /** metered entitlement granted each month, e.g. Monthly Post Updates */
+  /**
+   * Metered entitlement granted each month *per unit of quantity*, e.g. Monthly
+   * Post Updates. Quantity multiplies it, so the cap a customer actually holds
+   * is `quotaAllowance × quantity` (MODEL V5 row 4).
+   */
   quotaAllowance?: number;
   quotaLabel?: string;
   /**
-   * Sold as an allowance rather than as time. Nothing about this item is ever
-   * priced by the calendar: buying it costs the full price and grants the full
-   * allowance whenever in the period it happens, and what is owed back is the
-   * share of the allowance left unspent.
+   * Sold as an allowance rather than as time. Taking one part-way through a
+   * month buys the part of the month that is left: the price and the allowance
+   * are cut by the same remaining fraction (MODEL V5 row 47), so the rate per
+   * post is the same whenever in the month the customer arrives. What is owed
+   * back is the share of the *granted* allowance left unspent, valued against
+   * what was actually invoiced for it (MODEL V5 row 8).
    */
   usagePriced?: boolean;
   features: string[];
@@ -190,7 +199,6 @@ export const X_SOCIAL_ADDONS: CatalogItemDef[] = [
     monthlyCents: 1000,
     annualMonthlyCents: 900,
     minQuantity: 0,
-    maxQuantity: 1,
     family: 'x_social',
     perAccount: true,
     quotaAllowance: 600,
@@ -208,7 +216,6 @@ export const X_SOCIAL_ADDONS: CatalogItemDef[] = [
     monthlyCents: 3000,
     annualMonthlyCents: 2700,
     minQuantity: 0,
-    maxQuantity: 1,
     family: 'x_social',
     perAccount: true,
     quotaAllowance: 2000,

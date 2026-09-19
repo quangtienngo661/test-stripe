@@ -189,6 +189,10 @@ export default function SubscriptionPanel({ accountId, catalog, state, run, busy
           <label>Metered add-ons</label>
           {tieredFamilies.map(({ family, tiers }: any) => {
             const activeCode = tiers.find((t: any) => Number(draft.addOns?.[t.code] ?? 0) > 0)?.code ?? null;
+            const qty = activeCode ? Number(draft.addOns?.[activeCode] ?? 0) : 0;
+            const setQty = (n: number) =>
+              activeCode &&
+              setDraft({ ...draft, addOns: { ...draft.addOns, [activeCode]: Math.max(1, n) } });
             const liveCode = (state.current.addOns ?? []).find((a: any) =>
               tiers.some((t: any) => t.code === a.code),
             )?.code ?? null;
@@ -222,7 +226,8 @@ export default function SubscriptionPanel({ accountId, catalog, state, run, busy
                             ...Object.fromEntries(
                               Object.entries(draft.addOns ?? {}).filter(([c]) => !tiers.some((x: any) => x.code === c)),
                             ),
-                            [t.code]: 1,
+                            // a tier switch reprices the licences held, it does not reset them
+                            [t.code]: Math.max(1, qty),
                           },
                         })
                       }
@@ -231,6 +236,30 @@ export default function SubscriptionPanel({ accountId, catalog, state, run, busy
                     </button>
                   ))}
                 </div>
+                {activeCode && (
+                  <div className="addon-row">
+                    <span className="mini">licences</span>
+                    <button className="ghost small" disabled={qty <= 1} onClick={() => setQty(qty - 1)}>
+                      −
+                    </button>
+                    <input
+                      type="number"
+                      min={1}
+                      value={qty}
+                      onChange={(e) => setQty(Math.floor(Number(e.target.value) || 1))}
+                    />
+                    <button className="ghost small" onClick={() => setQty(qty + 1)}>
+                      +
+                    </button>
+                    <span className="mini">
+                      × {(tiers.find((t: any) => t.code === activeCode)?.quotaAllowance ?? 0).toLocaleString()} ={' '}
+                      {(
+                        (tiers.find((t: any) => t.code === activeCode)?.quotaAllowance ?? 0) * qty
+                      ).toLocaleString()}{' '}
+                      {tiers.find((t: any) => t.code === activeCode)?.quotaLabel ?? ''} / month
+                    </span>
+                  </div>
+                )}
                 <div className="plan-note">
                   {tiers
                     .map(
@@ -251,11 +280,13 @@ export default function SubscriptionPanel({ accountId, catalog, state, run, busy
                       <input
                         type="number"
                         min={0}
-                        max={liveTier?.quotaAllowance}
+                        max={state.usageCycle?.[family]?.allowance ?? liveTier?.quotaAllowance}
                         value={usedDraft[family] ?? String(state.usageCycle?.[family]?.used ?? state.account.usage?.[family] ?? 0)}
                         onChange={(e) => setUsedDraft({ ...usedDraft, [family]: e.target.value })}
                       />
-                      <span className="mini">/ {liveTier?.quotaAllowance?.toLocaleString()}</span>
+                      <span className="mini">
+                        / {(state.usageCycle?.[family]?.allowance ?? liveTier?.quotaAllowance ?? 0).toLocaleString()}
+                      </span>
                       <button
                         className="ghost small"
                         disabled={(() => {
@@ -440,6 +471,31 @@ export default function SubscriptionPanel({ accountId, catalog, state, run, busy
                 </ul>
               </div>
 
+              {/*
+                Committed provider capacity is a platform-wide figure, so nothing
+                on this account shows how close a change is to the ceiling. A
+                refusal would otherwise arrive with no warning at all.
+              */}
+              {preview.capacity && (
+                <div className="rule-box">
+                  <span className={`pill ${preview.capacity.blocked ? 'warn' : preview.capacity.warning ? 'warn' : 'ok'}`}>
+                    provider capacity
+                  </span>
+                  <ul>
+                    <li>
+                      After this change: <strong>{preview.capacity.projected.toLocaleString()}</strong> post
+                      updates a month committed across the platform
+                      {preview.capacity.projected !== preview.capacity.before && (
+                        <> (now {preview.capacity.before.toLocaleString()})</>
+                      )}
+                      .
+                    </li>
+                    {preview.capacity.blocked && <li className="error-text">{preview.capacity.blocked}</li>}
+                    {preview.capacity.warning && <li>{preview.capacity.warning}</li>}
+                  </ul>
+                </div>
+              )}
+
               {!preview.invoice && preview.previewUnavailable && (
                 <p className="hint">{preview.previewUnavailable}</p>
               )}
@@ -460,7 +516,15 @@ export default function SubscriptionPanel({ accountId, catalog, state, run, busy
                     )}
                     <tr>
                       <td>
-                        Full price, full allowance
+                        {/*
+                          The new configuration is sold by the slice of the month
+                          that is left, not at full price — saying otherwise
+                          contradicts the formula printed directly underneath.
+                        */}
+                        {preview.breakdown.remainingFraction !== undefined &&
+                        preview.breakdown.remainingFraction < 0.999
+                          ? 'New configuration, priced for the rest of the month'
+                          : 'New configuration, a whole allowance month'}
                         <div className="period">{preview.breakdown.chargeFormula}</div>
                       </td>
                       <td className="right">{money(preview.breakdown.chargeCents, currency)}</td>
@@ -610,8 +674,24 @@ export default function SubscriptionPanel({ accountId, catalog, state, run, busy
 
               {state.pendingChange && (
                 <div className="banner ok inline">
-                  Scheduled change ({state.pendingChange.ruleKey}): {state.pendingChange.changes?.join(', ')} —
-                  effective {day(state.pendingChange.effectiveAt)}
+                  <span>
+                    Scheduled change ({state.pendingChange.ruleKey}): {state.pendingChange.changes?.join(', ')} —
+                    effective {day(state.pendingChange.effectiveAt)}
+                  </span>
+                  {/*
+                    Row 49 gives the customer a way back before the boundary.
+                    Re-selecting the add-on cannot do it: the live subscription
+                    still holds it, so the request reads as no change at all.
+                  */}
+                  <button
+                    className="ghost small"
+                    disabled={busy}
+                    onClick={() =>
+                      run(() => api.cancelScheduledChange(accountId), 'Scheduled change called off')
+                    }
+                  >
+                    Call it off
+                  </button>
                 </div>
               )}
 

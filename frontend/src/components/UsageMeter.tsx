@@ -63,10 +63,27 @@ export default function UsageMeter({ accountId, state, run, busy }: any) {
       {rows.map(({ family, tier, cycle }: any) => {
         // the backend already rolled this to 0 if it belonged to a month that has passed
         const used = cycle?.used ?? state.account.usage?.[family] ?? 0;
-        const allowance = tier.quotaAllowance ?? 0;
+        /*
+         * The cap on screen is the one actually granted: quantity multiplies
+         * the per-unit allowance, and a month entered part-way through holds
+         * less than a whole one. Falling back to the price book's per-unit
+         * figure would under-report a customer holding several licences.
+         */
+        const quantity =
+          (state.current?.addOns ?? []).find((a: any) => a.code === tier.code)?.quantity ?? 1;
+        const allowance = cycle?.allowance ?? (tier.quotaAllowance ?? 0) * quantity;
+        const fullAllowance = cycle?.fullAllowance ?? (tier.quotaAllowance ?? 0) * quantity;
+        const partMonth = allowance > 0 && allowance < fullAllowance;
         const pct = allowance ? Math.min(100, Math.round((used / allowance) * 100)) : 0;
-        const unitValue = state.current.term === 'yearly' ? tier.annualMonthlyCents : tier.monthlyCents;
-        const worth = allowance ? Math.round((unitValue * (allowance - used)) / allowance) : 0;
+        /*
+         * Valued against what this month was actually invoiced, which after a
+         * part-month purchase is less than the list price. Falling back to the
+         * list price would quote a refund the billing engine never pays.
+         */
+        const invoiced =
+          cycle?.invoicedCents ??
+          (state.current.term === 'yearly' ? tier.annualMonthlyCents : tier.monthlyCents) * quantity;
+        const worth = allowance ? Math.round((invoiced * (allowance - used)) / allowance) : 0;
         return (
           <div key={family}>
             <p className="clock">
@@ -76,9 +93,15 @@ export default function UsageMeter({ accountId, state, run, busy }: any) {
               <div className="meter-fill" style={{ width: `${pct}%` }} />
             </div>
             <p className="hint">
-              {tier.quotaLabel} on {tier.name} · {(allowance - used).toLocaleString()} left, worth{' '}
+              {tier.quotaLabel} on {tier.name} × {quantity} · {(allowance - used).toLocaleString()} left, worth{' '}
               <strong>${(worth / 100).toFixed(2)}</strong> if given up now
             </p>
+            {partMonth && (
+              <p className="hint">
+                Bought part-way through the month: {allowance.toLocaleString()} of a whole{' '}
+                {fullAllowance.toLocaleString()} granted, priced by the same fraction.
+              </p>
+            )}
             {cycle && (
               <p className="hint">
                 {cycle.monthsInPeriod > 1

@@ -103,6 +103,29 @@ export class Account {
   @Prop({ type: Object, default: {} })
   usageCycleStart!: Record<string, number>;
 
+  /**
+   * The allowance actually granted for the month in progress, keyed by add-on
+   * family. It cannot be derived from the catalog any more: an add-on taken
+   * part-way through a month grants only the part that is left, so the cap a
+   * customer holds this month is a fact about the purchase rather than about
+   * the price book. Stamped with the month it belongs to; a stamp from a month
+   * that has passed means the next month starts whole again.
+   */
+  @Prop({ type: Object, default: {} })
+  quotaCap!: Record<string, number>;
+
+  @Prop({ type: Object, default: {} })
+  quotaCapCycleStart!: Record<string, number>;
+
+  /**
+   * What was actually invoiced for that family for the month in progress, in
+   * cents. MODEL V5 row 8 values a refund against what the customer really
+   * paid for this item this period, which after a mid-month purchase is not the
+   * list price — so the figure is recorded when it is charged.
+   */
+  @Prop({ type: Object, default: {} })
+  quotaInvoicedCents!: Record<string, number>;
+
   /** subscription items whose Stripe price is no longer in the catalog */
   @Prop({ type: [String], default: [] })
   unmappedPriceIds!: string[];

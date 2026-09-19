@@ -99,6 +99,7 @@ select { cursor: pointer; }
 .banner { padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; font-size: 13px; }
 .banner.error { background: rgba(255,95,86,0.12); border: 1px solid rgba(255,95,86,0.35); cursor: pointer; }
 .banner.ok { background: rgba(46,204,113,0.1); border: 1px solid rgba(46,204,113,0.3); }
+.banner.inline { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .banner.inline { margin: 12px 0 0; }
 .dismiss { float: right; color: var(--muted); font-size: 11px; }
 
@@ -203,4 +204,6 @@ pre {
 
 /* the used-quota box inside the metered add-on row: an editable number, not a readout */
 .quota-edit { display: flex; align-items: center; gap: 8px; }
+.addon-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.addon-row input { width: 72px; font-weight: 700; text-align: right; }
 .quota-edit input { width: 96px; font-weight: 700; font-size: 15px; text-align: right; }

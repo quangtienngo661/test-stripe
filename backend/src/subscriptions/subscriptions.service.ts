@@ -1676,6 +1676,25 @@ export class SubscriptionsService {
         ? `${to.name} → ${desired.term} term`
         : `${from.name} → ${to.name}`;
 
+    /*
+     * One operation should read as one invoice. A change of term already makes
+     * Stripe raise an invoice, and any invoice raised against a subscription
+     * sweeps in that subscription's pending items — so the allowance charge can
+     * ride along with it instead of being billed on its own.
+     *
+     * This moves the charge from "before the subscription changes" to "as the
+     * subscription changes", which is the stronger guarantee of the two: with
+     * error_if_incomplete Stripe refuses the whole update when the card fails,
+     * rather than leaving us to undo a payment we already took. Only the credit
+     * still goes on ahead, so only the credit needs putting back by hand.
+     */
+    const policy = await this.policy.get();
+    const willTermChange = (classification.currentTerm ?? desired.term) !== desired.term;
+    const combineInvoice =
+      policy.invoicing?.combineUsageSettlementInvoice !== false &&
+      willTermChange &&
+      rule.prorationBehavior === 'always_invoice';
+
     let balanceApplied = 0;
     let invoiceItemId: string | null = null;
     let invoice: Stripe.Invoice | null = null;
@@ -1703,6 +1722,10 @@ export class SubscriptionsService {
         });
         invoiceItemId = item.id;
 
+        // Left pending on purpose: the subscription update below raises the
+        // invoice that will carry it, alongside the plan's own proration lines.
+      }
+      if (charge > 0 && !combineInvoice) {
         // An invoice raised for a subscription always sweeps in that
         // subscription's pending items, and Stripe rejects the two parameters
         // together.
@@ -1801,67 +1824,126 @@ export class SubscriptionsService {
     })?.id;
 
     let updated: Stripe.Subscription;
-    const metadata = { accountId: account.id, planCode: desired.planCode, term: desired.term };
+    try {
+      const metadata = { accountId: account.id, planCode: desired.planCode, term: desired.term };
 
-    if (termChanged && existingUsageItemId) {
-      updated = await this.stripe.call('subscriptions.update (detach usage line)', () =>
-        this.stripe.client.subscriptions.update(sub.id, {
-          items: [{ id: existingUsageItemId, deleted: true }],
-          proration_behavior: 'none',
-        }),
-      );
-      const restItems = await this.buildItems(desired, updated, maps, { excludeUsagePriced: true });
-      updated = await this.stripe.call('subscriptions.update (term)', () =>
-        this.stripe.client.subscriptions.update(sub.id, {
-          items: restItems,
-          proration_behavior: rule.prorationBehavior === 'none' ? 'create_prorations' : rule.prorationBehavior,
-          payment_behavior: rule.paymentBehavior,
-          ...(rule.billingCycleAnchor === 'now' ? { billing_cycle_anchor: 'now' as const } : {}),
-          metadata,
-        }),
-      );
-      const reattach = await this.buildItems(desired, updated, maps);
-      const usageOnly = reattach.filter((i) => {
-        const priceId = i.price as string;
-        const mapped = priceId ? maps.byPriceId.get(priceId) : null;
-        return mapped ? maps.addOnItems.get(mapped.code)?.usagePriced : false;
-      });
-      updated = await this.stripe.call('subscriptions.update (re-attach usage line)', () =>
-        this.stripe.client.subscriptions.update(sub.id, {
-          items: usageOnly,
-          proration_behavior: 'none',
-        }),
-      );
-    } else {
-      updated = await this.stripe.call('subscriptions.update', () =>
-        this.stripe.client.subscriptions.update(sub.id, {
-          items: usageItems,
-          proration_behavior: 'none',
-          metadata,
-        }),
-      );
-
-      // Anything else asked for in the same breath is the ordinary engine's business.
-      const restItems = await this.buildItems(desired, updated, maps, { excludeUsagePriced: true });
-      const needsRest =
-        restItems.some((i) => i.deleted || !i.id) ||
-        classification.changes.some((c: string) => !c.startsWith('add-on ')) ||
-        restItems.some((i) => {
-          const existing = updated.items.data.find((x) => x.id === i.id);
-          const priceId = typeof existing?.price === 'string' ? existing?.price : existing?.price?.id;
-          return existing && (priceId !== i.price || (existing.quantity ?? 0) !== i.quantity);
-        });
-      if (needsRest) {
-        updated = await this.stripe.call('subscriptions.update', () =>
+      if (termChanged && existingUsageItemId) {
+        updated = await this.stripe.call('subscriptions.update (detach usage line)', () =>
+          this.stripe.client.subscriptions.update(sub.id, {
+            items: [{ id: existingUsageItemId, deleted: true }],
+            proration_behavior: 'none',
+          }),
+        );
+        const restItems = await this.buildItems(desired, updated, maps, { excludeUsagePriced: true });
+        updated = await this.stripe.call('subscriptions.update (term)', () =>
           this.stripe.client.subscriptions.update(sub.id, {
             items: restItems,
             proration_behavior: rule.prorationBehavior === 'none' ? 'create_prorations' : rule.prorationBehavior,
             payment_behavior: rule.paymentBehavior,
             ...(rule.billingCycleAnchor === 'now' ? { billing_cycle_anchor: 'now' as const } : {}),
+            metadata,
           }),
         );
+        const reattach = await this.buildItems(desired, updated, maps);
+        const usageOnly = reattach.filter((i) => {
+          const priceId = i.price as string;
+          const mapped = priceId ? maps.byPriceId.get(priceId) : null;
+          return mapped ? maps.addOnItems.get(mapped.code)?.usagePriced : false;
+        });
+        updated = await this.stripe.call('subscriptions.update (re-attach usage line)', () =>
+          this.stripe.client.subscriptions.update(sub.id, {
+            items: usageOnly,
+            proration_behavior: 'none',
+          }),
+        );
+      } else {
+        updated = await this.stripe.call('subscriptions.update', () =>
+          this.stripe.client.subscriptions.update(sub.id, {
+            items: usageItems,
+            proration_behavior: 'none',
+            metadata,
+          }),
+        );
+
+        // Anything else asked for in the same breath is the ordinary engine's business.
+        const restItems = await this.buildItems(desired, updated, maps, { excludeUsagePriced: true });
+        const needsRest =
+          restItems.some((i) => i.deleted || !i.id) ||
+          classification.changes.some((c: string) => !c.startsWith('add-on ')) ||
+          restItems.some((i) => {
+            const existing = updated.items.data.find((x) => x.id === i.id);
+            const priceId = typeof existing?.price === 'string' ? existing?.price : existing?.price?.id;
+            return existing && (priceId !== i.price || (existing.quantity ?? 0) !== i.quantity);
+          });
+        if (needsRest) {
+          updated = await this.stripe.call('subscriptions.update', () =>
+            this.stripe.client.subscriptions.update(sub.id, {
+              items: restItems,
+              proration_behavior: rule.prorationBehavior === 'none' ? 'create_prorations' : rule.prorationBehavior,
+              payment_behavior: rule.paymentBehavior,
+              ...(rule.billingCycleAnchor === 'now' ? { billing_cycle_anchor: 'now' as const } : {}),
+            }),
+          );
+        }
+      }
+    } catch (err: any) {
+      /*
+       * The charge was riding on this update, so Stripe has already undone it
+       * along with the update itself. The credit went on ahead of it though,
+       * and has to be put back by hand.
+       */
+      if (combineInvoice && invoiceItemId) {
+        try {
+          await this.stripe.client.invoiceItems.del(invoiceItemId);
+        } catch (e: any) {
+          this.logger.warn(`Rollback: could not delete ${invoiceItemId}: ${e.message}`);
+        }
+      }
+      if (combineInvoice && balanceApplied > 0) {
+        try {
+          await this.stripe.client.customers.createBalanceTransaction(account.stripeCustomerId!, {
+            amount: balanceApplied,
+            currency,
+            description: `Reversal: ${label} was not completed`,
+          });
+        } catch (e: any) {
+          this.logger.warn(`Rollback: could not reverse the credit: ${e.message}`);
+        }
+      }
+      await this.events.record({
+        accountId: account.id,
+        action: 'subscription.tier_change_failed',
+        ruleKey,
+        summary: `${label} rejected: ${err?.raw?.message ?? err.message}`,
+        policyApplied: rule as any,
+        error: { message: err?.raw?.message ?? err.message, code: err?.raw?.code },
+      });
+      throw new BadRequestException(
+        `Could not complete ${label}: ${err?.raw?.message ?? err.message}. Nothing was changed.`,
+      );
+    }
+
+    /*
+     * Whether Stripe swept the item in is a prediction, so it gets checked
+     * rather than trusted: an item left pending would wait for the next renewal
+     * to be billed, which is nobody's idea of paying now.
+     */
+    if (combineInvoice && invoiceItemId) {
+      const pending = await this.stripe.client.invoiceItems.retrieve(invoiceItemId);
+      if (!pending.invoice) {
+        invoice = await this.stripe.client.invoices.create({
+          customer: account.stripeCustomerId!,
+          subscription: sub.id,
+          auto_advance: false,
+          description: label,
+        });
+        invoice = await this.stripe.client.invoices.finalizeInvoice(invoice.id!);
+        if (invoice.amount_due > 0) {
+          invoice = await this.stripe.client.invoices.pay(invoice.id!);
+        }
       }
     }
+
     const updateParams = { note: 'see workings', termChanged };
 
     const summary = this.stripe.summarizeInvoice(invoice ?? ({} as Stripe.Invoice));

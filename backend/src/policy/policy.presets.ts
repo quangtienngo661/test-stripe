@@ -128,6 +128,9 @@ export const OPTISIGNS_DEFAULT: BillingPolicyShape = {
     automaticTax: false,
     defaultPaymentBehavior: 'error_if_incomplete',
     anchorToFirstOfMonth: false,
+    // one operation, one invoice: the allowance charge rides along with the
+    // invoice the subscription change already raises
+    combineUsageSettlementInvoice: true,
   },
   refunds: {
     windowDays: 30,

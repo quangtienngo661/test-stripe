@@ -188,7 +188,10 @@ Tab **Billing policy** trong UI (hoặc `GET/PUT /api/policy`) chỉnh:
   Mỗi lần tạo subscription còn có checkbox riêng để bật/tắt trial cho lần đó,
   và nút **End trial now** để kết thúc trial giữa chừng (`trial_end: 'now'`).
 - **Invoicing** — `collection_method`, `days_until_due`, `billing_mode`
-  (flexible/classic), automatic tax, `payment_behavior`, neo kỳ về ngày 1.
+  (flexible/classic), automatic tax, `payment_behavior`, neo kỳ về ngày 1, và
+  `combineUsageSettlementInvoice`: gộp khoản allowance của add-on đo theo usage
+  vào chính hoá đơn mà lệnh đổi subscription raise ra, để **một thao tác chỉ ra
+  một hoá đơn** và thẻ chỉ bị trừ một lần.
 - **Refunds** — cửa sổ ngày, credit note hay refund thuần, cho phép refund một
   phần, trần tự động duyệt.
 - **Constraints** — min/max số lượng, quan hệ add-on ↔ màn hình, cho phép về 0

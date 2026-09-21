@@ -70,6 +70,10 @@ export class PolicyService implements OnModuleInit {
     if (!policy.rules?.addOnTierChange) {
       policy.rules = { ...policy.rules, addOnTierChange: OPTISIGNS_DEFAULT.rules.addOnTierChange };
     }
+    // documents written while a settlement always raised its own invoice
+    if (policy.invoicing && policy.invoicing.combineUsageSettlementInvoice === undefined) {
+      policy.invoicing.combineUsageSettlementInvoice = true;
+    }
     return policy;
   }
 

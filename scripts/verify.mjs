@@ -1119,6 +1119,40 @@ const run = async () => {
     `${money(rollQuote.breakdown.creditCents)} — two elapsed months would add ${money(2 * Math.round(900 * 200 / 600))} if carried`);
   if (!KEEP) await DELETE(`/accounts/${rollId}`);
 
+  step('18d-3 · One operation reads as one invoice');
+  /*
+   * A term switch makes Stripe raise an invoice of its own, and any invoice
+   * raised against a subscription sweeps in that subscription's pending items.
+   * The allowance charge therefore rides along with the plan's proration lines
+   * instead of arriving as a second charge for the same click.
+   */
+  const oneId = (await POST('/accounts', {
+    email: `oneinvoice+${Date.now()}@optisigns-billing-demo.test`,
+    name: 'One Invoice', withTestClock: true,
+  }))._id;
+  await POST(`/accounts/${oneId}/payment-method/test`, { kind: 'visa' });
+  await POST(`/subscriptions/${oneId}/change`, { planCode: 'standard', term: 'monthly', screens: 1, addOns: [] });
+  await POST(`/subscriptions/${oneId}/change`, {
+    planCode: 'standard', term: 'monthly', screens: 1,
+    addOns: [{ code: 'x_social_standard', quantity: 1 }],
+  });
+  const beforeSwitch = (await GET(`/billing/accounts/${oneId}/invoices`)).length;
+  await POST(`/subscriptions/${oneId}/change`, {
+    planCode: 'standard', term: 'yearly', screens: 1,
+    addOns: [{ code: 'x_social_standard', quantity: 1 }],
+  });
+  const afterSwitch = await GET(`/billing/accounts/${oneId}/invoices`);
+  const raised = afterSwitch.slice(0, afterSwitch.length - beforeSwitch);
+  check('A term switch carrying a metered add-on raises one invoice, not two',
+    raised.length === 1, `${raised.length} invoice(s): ${raised.map((i) => money(i.total)).join(' + ')}`);
+  const raisedLines = (raised[0]?.lines ?? []).map((l) => l.description ?? '');
+  check('That invoice carries both the plan and the allowance',
+    raisedLines.some((d) => d.includes('X Social')) && raisedLines.some((d) => d.includes('Standard (at')),
+    raisedLines.join(' · '));
+  check('And the card is charged once, for the whole thing',
+    raised[0]?.total === 20600, `${money(raised[0]?.total)} = $108 year + $108 allowance - $10 unused`);
+  if (!KEEP) await DELETE(`/accounts/${oneId}`);
+
   step('18e · An add-on needs a plan underneath it');
   let xNoPlan = false;
   try {

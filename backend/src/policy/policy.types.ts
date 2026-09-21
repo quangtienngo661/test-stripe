@@ -144,6 +144,17 @@ export interface InvoicingPolicy {
   defaultPaymentBehavior: PaymentBehavior;
   /** align every renewal to the 1st of the month (Stripe billing_cycle_anchor_config) */
   anchorToFirstOfMonth: boolean;
+  /**
+   * Whether a usage-priced settlement shares the invoice that the subscription
+   * change raises. One operation then reads as one invoice and the card is
+   * charged once.
+   *
+   * It only applies when the accompanying change raises an invoice at all: a
+   * tier switch that carries `proration_behavior: 'none'` raises none, so the
+   * settlement keeps its own invoice rather than sitting unbilled until the
+   * next renewal.
+   */
+  combineUsageSettlementInvoice: boolean;
 }
 
 export interface RefundPolicy {

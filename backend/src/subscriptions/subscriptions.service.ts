@@ -571,7 +571,9 @@ export class SubscriptionsService {
                 `Handed back: ${quote.workings.quotaUnused} of the ${quote.workings.allowance} granted this month, valued against the ${(quote.workings.invoicedForCycle / 100).toFixed(2)} ${this.stripe.currency.toUpperCase()} actually invoiced for it${quote.workings.monthsAhead ? `, plus ${quote.workings.monthsAhead} untouched month(s) in full` : ''} → ${(quote.credit / 100).toFixed(2)} ${this.stripe.currency.toUpperCase()} of account credit.`,
               ]
             : []),
-          `${(quote.workings.remainingFraction * 100).toFixed(1)}% of this allowance month is still ahead, so ${quote.to!.name} is sold by that slice: ${quote.workings.quotaFormula}, costing ${(quote.workings.partMonthCharge / 100).toFixed(2)} ${this.stripe.currency.toUpperCase()}${quote.workings.monthsBought > 1 ? ` plus ${quote.workings.monthsBought - 1} whole month(s) up front` : ''}.`,
+          quote.workings.partMonthCharge
+            ? `${(quote.workings.remainingFraction * 100).toFixed(1)}% of this allowance month is still ahead, so ${quote.to!.name} is sold by that slice: ${quote.workings.quotaFormula}, costing ${(quote.workings.partMonthCharge / 100).toFixed(2)} ${this.stripe.currency.toUpperCase()}${quote.workings.monthsBought > 1 ? ` plus ${quote.workings.monthsBought - 1} whole month(s) up front` : ''}.`
+            : `The term change restarts the cycle, so ${quote.to!.name} is sold as ${quote.workings.monthsBought} whole month(s) at the list price, ${quote.workings.quotaGranted.toLocaleString()} ${quote.to!.quotaLabel ?? 'units'} each — no month is part-spent, so nothing is sliced.`,
           `Stripe proration stays off, so the invoice only ever carries the new configuration — it never goes negative.`,
           `Card is charged ${(dueNow / 100).toFixed(2)} ${this.stripe.currency.toUpperCase()} after the credit is applied.`,
         ],
@@ -1575,27 +1577,34 @@ export class SubscriptionsService {
     if (to) {
       const perUnit = to.quotaAllowance ?? 0;
       const rate = rateOn(to, term) * toQuantity;
-      /*
-       * The month in progress is sold by the slice that is left, price and
-       * allowance cut by the same fraction so the rate per post never depends
-       * on the arrival date (MODEL V5 row 47). On a yearly term the months
-       * after it are bought whole, allowance and all.
-       */
-      /*
-       * Whole allowance months bought on top of the one in progress. Switching
-       * term resets the billing anchor, so a fresh annual period starts here
-       * and eleven whole months follow. Staying on the same term keeps the
-       * period the customer is already in, so only the months actually left in
-       * it are bought — charging a full eleven from the middle of a year bills
-       * months that are already paid for (MODEL V5 row 8 prices the remaining
-       * whole months by time: "whole months x monthly slice").
-       */
       const termChanged = currentTerm !== term;
-      const wholeMonthsAfter = term === 'yearly' ? (termChanged ? 11 : monthsAhead) : 0;
-      monthsBought = 1 + wholeMonthsAfter;
-      partMonthCharge = Math.round(rate * fraction);
-      charge = partMonthCharge + rate * wholeMonthsAfter;
-      quotaGranted = Math.floor(perUnit * toQuantity * fraction);
+      if (termChanged) {
+        /*
+         * A change of term resets the billing anchor, so the new period starts
+         * here rather than part-way through anything: a year bought today runs
+         * a full twelve months from today. There is no month in progress left
+         * to slice, so every month is bought whole and the allowance is granted
+         * in full — the customer pays the list price and gets the list quota.
+         */
+        monthsBought = term === 'yearly' ? 12 : 1;
+        partMonthCharge = 0;
+        charge = rate * monthsBought;
+        quotaGranted = perUnit * toQuantity;
+      } else {
+        /*
+         * Staying on the same term keeps the period the customer is already in.
+         * The month in progress is sold by the slice that is left, price and
+         * allowance cut by the same fraction so the rate per post never depends
+         * on the arrival date (MODEL V5 row 47). Only the months actually left
+         * in the period are bought on top — charging a full eleven from the
+         * middle of a year would bill months already paid for (MODEL V5 row 8).
+         */
+        const wholeMonthsAfter = term === 'yearly' ? monthsAhead : 0;
+        monthsBought = 1 + wholeMonthsAfter;
+        partMonthCharge = Math.round(rate * fraction);
+        charge = partMonthCharge + rate * wholeMonthsAfter;
+        quotaGranted = Math.floor(perUnit * toQuantity * fraction);
+      }
     }
 
     const pct = (f: number) => `${(f * 100).toFixed(1)}%`;
@@ -1630,15 +1639,19 @@ export class SubscriptionsService {
               ? ` + ${rateOn(from, currentTerm) * fromQuantity} × ${monthsAhead} untouched months`
               : '')
           : 'nothing given up',
-        chargeFormula: to
-          ? `${rateOn(to, term)} × ${toQuantity} × ${pct(fraction)} of the month left` +
-            (monthsBought > 1
-              ? ` + ${rateOn(to, term) * toQuantity} × ${monthsBought - 1} whole months`
-              : '')
-          : 'nothing taken',
-        quotaFormula: to
-          ? `floor(${to.quotaAllowance ?? 0} × ${toQuantity} × ${pct(fraction)}) = ${quotaGranted}`
-          : 'no allowance taken',
+        chargeFormula: !to
+          ? 'nothing taken'
+          : partMonthCharge
+            ? `${rateOn(to, term)} × ${toQuantity} × ${pct(fraction)} of the month left` +
+              (monthsBought > 1
+                ? ` + ${rateOn(to, term) * toQuantity} × ${monthsBought - 1} whole months`
+                : '')
+            : `${rateOn(to, term)} × ${toQuantity} × ${monthsBought} whole months`,
+        quotaFormula: !to
+          ? 'no allowance taken'
+          : partMonthCharge
+            ? `floor(${to.quotaAllowance ?? 0} × ${toQuantity} × ${pct(fraction)}) = ${quotaGranted}`
+            : `${to.quotaAllowance ?? 0} × ${toQuantity} = ${quotaGranted} in full`,
       },
     };
   }
@@ -1695,19 +1708,27 @@ export class SubscriptionsService {
       willTermChange &&
       rule.prorationBehavior === 'always_invoice';
 
-    let balanceApplied = 0;
+    let creditItemId: string | null = null;
     let invoiceItemId: string | null = null;
     let invoice: Stripe.Invoice | null = null;
 
     try {
-      // The credit goes on first so the invoice below can absorb it.
+      /*
+       * The credit is a line of its own rather than an adjustment to the
+       * customer's balance. Read on the invoice, "Applied balance -10.00" says
+       * nothing about where the money came from; a line sitting next to
+       * Stripe's own "Unused time on ..." says it in the same breath, and the
+       * two ways of giving time and quota back then look alike.
+       */
       if (credit > 0) {
-        await this.stripe.client.customers.createBalanceTransaction(account.stripeCustomerId!, {
+        const creditItem = await this.stripe.client.invoiceItems.create({
+          customer: account.stripeCustomerId!,
+          subscription: sub.id,
           amount: -credit,
           currency,
-          description: `Unspent ${from?.quotaLabel ?? 'allowance'} on ${from?.name}: ${unused}/${allowance}`,
+          description: `Unused quota on ${from?.name} — ${unused.toLocaleString()} of ${allowance.toLocaleString()} ${from?.quotaLabel ?? 'units'}`,
         });
-        balanceApplied = credit;
+        creditItemId = creditItem.id;
       }
       if (charge > 0) {
         const item = await this.stripe.client.invoiceItems.create({
@@ -1715,10 +1736,14 @@ export class SubscriptionsService {
           subscription: sub.id,
           amount: charge,
           currency,
-          description:
-            `${to.name} × ${usageChange.toQuantity} — ${quote.quotaGranted} ${to.quotaLabel ?? 'units'} ` +
-            `for the rest of this month` +
-            (workings.monthsBought > 1 ? ` + ${workings.monthsBought - 1} whole months` : ''),
+          description: workings.partMonthCharge
+            ? `${to.name} × ${usageChange.toQuantity} — ${quote.quotaGranted} ${to.quotaLabel ?? 'units'} ` +
+              `for the rest of this month` +
+              (workings.monthsBought > 1 ? ` + ${workings.monthsBought - 1} whole months` : '')
+            : `${to.name} × ${usageChange.toQuantity} — ` +
+              (workings.monthsBought > 1
+                ? `${workings.monthsBought} whole months, ${quote.quotaGranted.toLocaleString()} ${to.quotaLabel ?? 'units'} each`
+                : `one whole month, ${quote.quotaGranted.toLocaleString()} ${to.quotaLabel ?? 'units'}`),
         });
         invoiceItemId = item.id;
 
@@ -1755,15 +1780,11 @@ export class SubscriptionsService {
           this.logger.warn(`Rollback: could not delete ${invoiceItemId}: ${e.message}`);
         }
       }
-      if (balanceApplied > 0) {
+      if (creditItemId) {
         try {
-          await this.stripe.client.customers.createBalanceTransaction(account.stripeCustomerId!, {
-            amount: balanceApplied,
-            currency,
-            description: `Reversal: ${label} was not completed`,
-          });
+          await this.stripe.client.invoiceItems.del(creditItemId);
         } catch (e: any) {
-          this.logger.warn(`Rollback: could not reverse the credit: ${e.message}`);
+          this.logger.warn(`Rollback: could not delete the credit line ${creditItemId}: ${e.message}`);
         }
       }
 
@@ -1899,15 +1920,11 @@ export class SubscriptionsService {
           this.logger.warn(`Rollback: could not delete ${invoiceItemId}: ${e.message}`);
         }
       }
-      if (combineInvoice && balanceApplied > 0) {
+      if (combineInvoice && creditItemId) {
         try {
-          await this.stripe.client.customers.createBalanceTransaction(account.stripeCustomerId!, {
-            amount: balanceApplied,
-            currency,
-            description: `Reversal: ${label} was not completed`,
-          });
+          await this.stripe.client.invoiceItems.del(creditItemId);
         } catch (e: any) {
-          this.logger.warn(`Rollback: could not reverse the credit: ${e.message}`);
+          this.logger.warn(`Rollback: could not delete the credit line ${creditItemId}: ${e.message}`);
         }
       }
       await this.events.record({

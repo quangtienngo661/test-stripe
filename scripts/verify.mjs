@@ -967,11 +967,20 @@ const run = async () => {
     `${xAfterUp.stripe.items.length} items · ${JSON.stringify(xAfterUp.current.addOns)}`);
 
   const xInvoices = await GET(`/billing/accounts/${xid}/invoices`);
-  check('Exactly one invoice was raised, and it is positive',
-    xInvoices.length === xInvoicesBefore + 1 && xInvoices[0].total === xUp.chargeCents,
-    `${xInvoices[0].number} ${money(xInvoices[0].total)}`);
-  check('The credit absorbed part of it instead of becoming a negative invoice',
-    xInvoices[0].amountPaid === xUp.chargeCents - xUp.creditCents && xInvoices.every((i) => i.total >= 0),
+  check('Exactly one invoice was raised',
+    xInvoices.length === xInvoicesBefore + 1 && xInvoices[0].total === xUp.chargeCents - xUp.creditCents,
+    `${xInvoices[0].number} ${money(xInvoices[0].total)} = ${money(xUp.chargeCents)} - ${money(xUp.creditCents)}`);
+  /*
+   * The hand-back is a line of its own rather than an adjustment to the
+   * customer's balance, so an invoice says where every figure on it came from
+   * instead of ending on an unexplained "Applied balance".
+   */
+  const xUpLines = (xInvoices[0].lines ?? []).map((l) => l.description ?? '');
+  check('The credit reads as a line, not as an unexplained applied balance',
+    xUpLines.some((d) => d.startsWith('Unused quota on')),
+    xUpLines.join(' · '));
+  check('And the card pays the difference',
+    xInvoices[0].amountPaid === xUp.chargeCents - xUp.creditCents,
     `card paid ${money(xInvoices[0].amountPaid)} of ${money(xInvoices[0].total)}`);
 
   // and back down: same rule, same shape, bigger credit
@@ -991,8 +1000,19 @@ const run = async () => {
   check('And it hands back the unspent share of the posts granted',
     xDown.creditCents === Math.round((xUp.chargeCents * (xUp.quota.granted - 500)) / xUp.quota.granted),
     `${money(xDown.creditCents)} = ${xDown.workings.creditFormula}`);
-  check('Still no negative invoice anywhere',
-    (await GET(`/billing/accounts/${xid}/invoices`)).every((i) => i.total >= 0));
+  /*
+   * Giving a tier up hands back more than the smaller tier costs, so once the
+   * credit is a line on the invoice the invoice itself nets below zero. Stripe
+   * turns that into customer credit; what matters is that nothing is charged
+   * for it and the reader can see which line it came from.
+   */
+  const xDownInvoices = await GET(`/billing/accounts/${xid}/invoices`);
+  const xDownLines = (xDownInvoices[0].lines ?? []).map((l) => l.description ?? '');
+  check('A credit bigger than the new charge still shows as its own line',
+    xDownLines.some((d) => d.startsWith('Unused quota on')), xDownLines.join(' · '));
+  check('And nothing is collected for an invoice that owes the customer',
+    xDownInvoices.every((i) => i.amountPaid >= 0),
+    xDownInvoices.map((i) => `${money(i.total)} paid ${money(i.amountPaid)}`).join(' · '));
 
   step('18c-2 · The usage meter feeds the price, and resets when a new allowance is granted');
   await PUT(`/accounts/${xid}/usage`, { family: 'x_social', used: 150 });
@@ -1046,13 +1066,16 @@ const run = async () => {
         Math.round((xRebuy.chargeCents * (xRebuy.quota.granted - 100)) / xRebuy.quota.granted),
     `${money(xTerm.creditCents)} = ${xTerm.workings.creditFormula}`);
   /*
-   * A yearly term buys twelve allowances, but the one in progress is still only
-   * worth the part of it that is left — so it is eleven whole months plus a
-   * slice, not twelve whole months.
+   * A change of term resets the billing anchor, so the year bought here runs a
+   * full twelve months from today: no month is part-spent, so none is sliced
+   * and the allowance is granted whole.
    */
-  check('And bought at the new term: the month in progress by the slice, then eleven whole',
-    xTerm.chargeCents === Math.round(900 * xTerm.workings.remainingFraction) + 900 * 11,
+  check('And bought at the new term: twelve whole months at the list price',
+    xTerm.chargeCents === 900 * 12 && xTerm.workings.partMonthCharge === 0,
     `${money(xTerm.chargeCents)} = ${xTerm.workings.chargeFormula}`);
+  check('The first month of the new term is a whole allowance, not a stub',
+    xTerm.workings.quotaGranted === 600,
+    `${xTerm.workings.quotaGranted} granted — ${xTerm.workings.quotaFormula}`);
 
   const xTermInvoices = await GET(`/billing/accounts/${xid}/invoices`);
   const xProrationLines = xTermInvoices
@@ -1150,7 +1173,8 @@ const run = async () => {
     raisedLines.some((d) => d.includes('X Social')) && raisedLines.some((d) => d.includes('Standard (at')),
     raisedLines.join(' · '));
   check('And the card is charged once, for the whole thing',
-    raised[0]?.total === 20600, `${money(raised[0]?.total)} = $108 year + $108 allowance - $10 unused`);
+    raised[0]?.total === 19600,
+    `${money(raised[0]?.total)} = $108 year + $108 allowance - $10 unused quota`);
   if (!KEEP) await DELETE(`/accounts/${oneId}`);
 
   step('18e · An add-on needs a plan underneath it');

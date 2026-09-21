@@ -38,6 +38,29 @@ Hai hệ quả:
 - Không có tiền rời khỏi Stripe trong luồng tự phục vụ. Muốn hoàn về thẻ thì phải
   là thao tác tay của CSKH.
 
+### Một thao tác, một hoá đơn
+
+Một lần bấm chỉ sinh **một hoá đơn** và thẻ chỉ bị trừ **một lần**, dù thao tác
+đó đụng tới cả gói nền lẫn add-on. Ví dụ đổi sang gói năm khi đang giữ X: phần
+plan và phần allowance nằm chung một hoá đơn, không tách làm hai lần thu.
+
+### Mọi khoản trả lại đều là một dòng đọc được
+
+Tiền trả lại cho khách **hiện thành dòng trong danh sách khoản chi**, không nấp ở
+ô *Applied balance* cuối hoá đơn. Hai cách trả lại viết song song nhau:
+
+| Dòng trên hoá đơn | Nghĩa |
+|---|---|
+| `Unused time on OptiSigns Standard after 05 Oct 2026` | phần **thời gian** chưa dùng của gói nền |
+| `Unused quota on X Social Standard — 600 of 1,200 Monthly Post Updates` | phần **hạn mức** chưa tiêu của add-on |
+
+Người đọc hoá đơn thấy ngay khoản trừ đến từ đâu.
+
+**Hệ quả:** khi khoản trả lại **lớn hơn** khoản thu, hoá đơn nét âm. Stripe tự
+chuyển phần âm đó thành credit của khách và **không thu đồng nào**. Trước đây
+khoản trả lại nấp trong số dư nên hoá đơn luôn dương, nhưng khách không biết
+tiền ở đâu ra — đổi lại sự rõ ràng thì chấp nhận con số âm trên chứng từ.
+
 ---
 
 ## 2. Khách mua thêm
@@ -124,6 +147,8 @@ Hiện tại **không có đường tự phục vụ**. Ba lựa chọn:
 - Chu kỳ **tính lại từ hôm nay**; ngày gia hạn mới là hôm nay + 1 năm.
 - Thu ngay tiền cả năm, **trừ phần tháng chưa dùng**.
 - Đo thật: Engage 1 màn hình, mới dùng 1 ngày → thu **$294.00** ($324 − $30).
+- Add-on đo theo hạn mức đi kèm được mua **trọn 12 tháng tính từ hôm nay**, đủ
+  giá và đủ allowance — vì chu kỳ vừa khởi động lại nên không còn tháng nào dở.
 
 **Năm → Tháng** (khách muốn giảm cam kết)
 - Có hiệu lực **ngay**, không bắt chờ hết năm.
@@ -230,8 +255,9 @@ Chu kỳ của add-on **luôn bám theo gói chính**.
 
 | | Cách tính |
 |---|---|
-| **Nhận một tier** | trả **đủ giá**, nhận **đủ allowance**. Gói tháng = 1 hạn mức, gói năm = 12 hạn mức |
-| **Trả lại một tier** | `giá đã mua × (allowance chưa tiêu / allowance)`, cộng thêm các tháng trọn chưa đụng tới nếu đang ở gói năm |
+| **Nhận một tier giữa kỳ** | tháng đang dở được bán theo **phần còn lại**: giá và allowance cùng cắt một tỉ lệ, nên giá mỗi post không phụ thuộc ngày mua |
+| **Nhận một tier khi đổi term** | mốc chu kỳ khởi động lại nên **không có tháng nào dở**: mua **trọn 12 tháng** (hoặc 1 nếu về gói tháng), **đủ giá, đủ allowance** |
+| **Trả lại một tier** | `giá đã trả cho tháng này × (allowance chưa tiêu / allowance)`, cộng thêm các tháng trọn chưa đụng tới nếu đang ở gói năm |
 | **Huỷ hẳn** | không hoàn đồng nào, giữ allowance tới hết kỳ |
 
 Phần trả lại định giá theo **term đang có**, phần nhận định giá theo **term mới**.
@@ -259,8 +285,13 @@ Gói năm trả tiền trước cho 12 hạn mức, mỗi tháng 600 (hoặc 2.0
 
 ### Số đo thật
 
-**Mua lần đầu khi chỉ còn 10/30 ngày** → thu **$10.00 đủ**. Nếu prorate theo ngày
-thì chỉ $3.33 — không dùng cách đó nữa.
+**Mua lần đầu khi chỉ còn 10/30 ngày** → thu **$3.33** và cấp **200 post**, tức
+33,3% của cả giá lẫn hạn mức. Cắt cùng một tỉ lệ nên giá mỗi post không đổi:
+khách mua ngày nào cũng trả đúng chừng đó tiền cho chừng đó post.
+
+**Đổi term thì khác hẳn** — mốc chu kỳ khởi động lại nên không còn tháng nào dở
+dang. Đổi sang gói năm hôm nay nghĩa là **12 tháng trọn tính từ hôm nay**: thu
+đủ `$9 × 12 = $108.00` và cấp đủ 600 post mỗi tháng, không cắt gì cả.
 
 **Đổi Standard → Pro giữa kỳ, đã tiêu 200/600**
 
@@ -270,16 +301,29 @@ thì chỉ $3.33 — không dùng cách đó nữa.
 | Pro, đủ giá đủ hạn mức | **+$30.00** |
 | Hoá đơn | **$30.00** (dương) · thu thẻ **$23.33** |
 
-**Đổi term tháng → năm, đang giữ X Pro, đã tiêu 500/2,000**
+**Đổi term tháng → năm, Standard 1 màn hình + X Standard × 2, đã tiêu 600/1,200,
+đang ở giữa kỳ** — đây là hoá đơn thật, nguyên văn:
 
-| | |
+```
+Unused time on OptiSigns Standard after 05 Oct 2026                  −$5.33
+X Social Standard × 2 — 12 whole months, 1,200 Monthly Post Updates  $216.00
+Unused quota on X Social Standard — 600 of 1,200 Monthly Post Upd…  −$10.00
+1 × OptiSigns Standard (at $108.00 / year)                          $108.00
+                                                          Total     $308.67
+                                                    Amount paid     $308.67
+```
+
+Bốn dòng, bốn nguyên tắc nằm cạnh nhau:
+
+| Dòng | Nói lên điều gì |
 |---|---|
-| Trả lại (định giá theo giá tháng đang trả) | `$30 × 1500/2000` = **−$22.50** |
-| Mua 12 hạn mức ở giá năm | `$27 × 12` = **+$324.00** |
-| Hoá đơn X | $324.00 · thu thẻ **$301.50** |
-| Hoá đơn gói nền (theo thời gian) | $324.00 − $10.00 chưa dùng = **$314.00** |
+| −$5.33 | gói nền trả lại phần **thời gian** chưa dùng (16/30 tháng) |
+| $216.00 | X mua **trọn 12 tháng** ở giá năm, đủ allowance — không cắt theo ngày |
+| −$10.00 | X trả lại phần **hạn mức** chưa tiêu, hiện thành dòng chứ không nấp ở Applied balance |
+| $108.00 | gói nền chạy tròn một năm tính từ hôm nay |
 
-Gói nền vẫn prorate theo ngày như thường. Chỉ X là không.
+Gói nền prorate theo ngày như thường. Chỉ X là không. Và cả hai nằm **chung một
+hoá đơn**, thẻ trừ một lần.
 
 ### Một cạm bẫy của Stripe
 
